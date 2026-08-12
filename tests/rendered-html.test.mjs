@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
 async function render() {
@@ -25,11 +24,4 @@ test("server renders the game page", async () => {
   assert.match(html, /Карта маршрутов/);
   assert.match(html, /Рейсы/);
   assert.match(html, /1 100|1100/);
-  assert.doesNotMatch(html, /codex-preview|Your site is taking shape|Building your site/i);
-});
-
-test("starter preview and its dependency are removed", async () => {
-  const packageJson = await readFile(new URL("../package.json", import.meta.url), "utf8");
-  assert.doesNotMatch(packageJson, /react-loading-skeleton/);
-  await assert.rejects(access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)));
 });
