@@ -7,18 +7,23 @@ import {
   BATTERY_RESERVE,
   calculateDelivery,
   isSavedGame,
+  MAX_DELIVERIES_PER_DAY,
   MAX_DAYS,
   resolveDelivery,
   TARGET_CREDITS,
   type GameState,
+  type Order,
 } from "./game";
 
-const STORAGE_KEY = "moon-courier-crisis:v1";
+const STORAGE_KEY = "moon-courier-crisis:v2";
 
-function urgencyLabel(hours: number) {
-  if (hours <= 2) return "Срочно";
-  if (hours <= 4) return "Сегодня";
-  return "Обычный";
+function urgencyLabel(order: Order, currentDay: number) {
+  if (order.status === "delivered") return "Выполнен";
+  if (order.status === "expired") return "Просрочен";
+  const daysLeft = order.expiresOnDay - currentDay;
+  if (daysLeft === 0) return "Последний день";
+  if (daysLeft === 1) return "До завтра";
+  return `До дня ${order.expiresOnDay}`;
 }
 
 function riskLabel(risk: number) {
@@ -76,6 +81,14 @@ export default function GameBoard() {
   const estimate = calculateDelivery(selectedOrder, selectedRover, selectedZone);
   const progress = Math.min(100, (game.credits / TARGET_CREDITS) * 100);
   const maxCapacity = Math.max(...game.rovers.map((rover) => rover.capacity));
+  const deliveriesToday = game.deliveries.filter(
+    (delivery) => delivery.day === game.day,
+  ).length;
+  const dailyLimitReached = deliveriesToday >= MAX_DELIVERIES_PER_DAY;
+  const canDispatch = estimate.canDispatch && !dailyLimitReached;
+  const blockReason = dailyLimitReached
+    ? `Лимит базы на сегодня: ${MAX_DELIVERIES_PER_DAY} рейса`
+    : estimate.reasons[0];
 
   const routeX = selectedZone.x - 50;
   const routeY = selectedZone.y - 52;
@@ -123,9 +136,17 @@ export default function GameBoard() {
   function nextDay() {
     const next = advanceDay(game);
     setGame(next);
+    const nextAvailableOrder = next.orders.find(
+      (order) => order.status === "available" && order.weight <= maxCapacity,
+    );
+    if (nextAvailableOrder) setSelectedOrderId(nextAvailableOrder.id);
+    const newlyExpired = next.orders.filter(
+      (order, index) =>
+        order.status === "expired" && game.orders[index]?.status === "available",
+    ).length;
     setFeedback(
       next.status === "playing"
-        ? `Начался день ${next.day}. Батареи роверов пополнены.`
+        ? `Начался день ${next.day}. Батареи пополнены.${newlyExpired ? ` Просрочено заказов: ${newlyExpired}.` : ""}`
         : next.status === "won"
           ? "Цель выполнена. База закончила смену в плюсе!"
           : "Смена завершена — попробуйте другой порядок заказов.",
@@ -158,6 +179,10 @@ export default function GameBoard() {
             <span>День</span>
             <strong>{game.day}/{MAX_DAYS}</strong>
           </div>
+          <div className="day-chip">
+            <span>Рейсы</span>
+            <strong>{deliveriesToday}/{MAX_DELIVERIES_PER_DAY}</strong>
+          </div>
           <div className="credits-block">
             <div className="credits-line">
               <span>Кредиты</span>
@@ -168,7 +193,7 @@ export default function GameBoard() {
               <span style={{ width: `${progress}%` }} />
             </div>
           </div>
-          <button className="secondary-button" type="button" onClick={nextDay}>
+          <button className="secondary-button" type="button" onClick={nextDay} disabled={game.status !== "playing"}>
             {game.day === MAX_DAYS ? "Завершить игру" : "Следующий день"}
           </button>
           <button className="icon-button" type="button" onClick={resetGame} aria-label="Сбросить игру">↻</button>
@@ -207,15 +232,15 @@ export default function GameBoard() {
                 <button
                   type="button"
                   key={order.id}
-                  className={`order-card ${selected ? "selected" : ""} ${order.status === "delivered" ? "done" : ""}`}
+                  className={`order-card ${selected ? "selected" : ""} ${order.status !== "available" ? "done" : ""}`}
                   onClick={() => {
                     setSelectedOrderId(order.id);
                     setFeedback(null);
                   }}
                 >
                   <span className="order-topline">
-                    <span className={`urgency urgency-${order.deadlineHours <= 2 ? "hot" : "normal"}`}>
-                      {urgencyLabel(order.deadlineHours)}
+                    <span className={`urgency urgency-${order.status === "expired" || (order.status === "available" && order.expiresOnDay <= game.day) ? "hot" : "normal"}`}>
+                      {urgencyLabel(order, game.day)}
                     </span>
                     <span className="order-reward">+{order.reward} кр.</span>
                   </span>
@@ -224,12 +249,14 @@ export default function GameBoard() {
                   <span className="order-meta">
                     <span>{order.weight} кг</span>
                     <span>{order.deadlineHours} ч</span>
+                    <span>до дня {order.expiresOnDay}</span>
                     <span>риск {zone.risk + order.riskBonus}%</span>
                   </span>
                   {permanentlyImpossible && order.status === "available" && (
                     <span className="impossible-note">Не увезёт ни один ровер</span>
                   )}
                   {order.status === "delivered" && <span className="done-note">✓ Доставлено</span>}
+                  {order.status === "expired" && <span className="expired-note">Срок истёк</span>}
                 </button>
               );
             })}
@@ -310,6 +337,14 @@ export default function GameBoard() {
             {game.rovers.map((rover) => {
               const roverEstimate = calculateDelivery(selectedOrder, rover, selectedZone);
               const chosen = rover.id === selectedRover.id;
+              const roverCanDispatch = roverEstimate.canDispatch && !dailyLimitReached;
+              const availabilityLabel = dailyLimitReached
+                ? "лимит"
+                : rover.status === "resting"
+                  ? "отдыхает"
+                  : roverCanDispatch
+                    ? "готов"
+                    : "нельзя";
               return (
                 <button
                   type="button"
@@ -323,8 +358,8 @@ export default function GameBoard() {
                   <span className="rover-card-top">
                     <span className="rover-avatar" aria-hidden="true">{rover.name.slice(0, 1)}</span>
                     <span className="rover-name"><strong>{rover.name}</strong><small>{rover.note}</small></span>
-                    <span className={`availability ${roverEstimate.canDispatch ? "ok" : "no"}`}>
-                      {roverEstimate.canDispatch ? "готов" : "нельзя"}
+                    <span className={`availability ${roverCanDispatch ? "ok" : "no"}`}>
+                      {availabilityLabel}
                     </span>
                   </span>
                   <span className="battery-line">
@@ -354,10 +389,10 @@ export default function GameBoard() {
               <div><span>Риск</span><strong>{estimate.risk}%</strong></div>
               <div><span>Награда</span><strong>{selectedOrder.reward} кр.</strong></div>
             </div>
-            {!estimate.canDispatch && (
+            {!canDispatch && (
               <div className="block-reason">
                 <strong>Рейс невозможен</strong>
-                <span>{estimate.reasons[0]}</span>
+                <span>{blockReason}</span>
               </div>
             )}
           </div>
@@ -367,12 +402,12 @@ export default function GameBoard() {
           <button
             type="button"
             className="primary-button"
-            disabled={!estimate.canDispatch || game.status !== "playing"}
+            disabled={!canDispatch || game.status !== "playing"}
             onClick={dispatch}
           >
-            {estimate.canDispatch ? "Запустить доставку" : "Доставка недоступна"}
+            {canDispatch ? "Запустить доставку" : "Доставка недоступна"}
           </button>
-          <p className="dispatch-hint">В расчёте оставлен резерв батареи {BATTERY_RESERVE}% на непредвиденный случай.</p>
+          <p className="dispatch-hint">Один ровер выполняет один рейс в день. В расчёте оставлен резерв батареи {BATTERY_RESERVE}%.</p>
         </aside>
       </section>
 

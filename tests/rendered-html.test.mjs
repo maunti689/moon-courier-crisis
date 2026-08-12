@@ -23,6 +23,8 @@ test("server renders the game page", async () => {
   assert.match(html, /<title>Moon Courier Crisis/);
   assert.match(html, /Moon Courier Crisis/);
   assert.match(html, /Карта маршрутов/);
+  assert.match(html, /Рейсы/);
+  assert.match(html, /1 100|1100/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|Building your site/i);
 });
 

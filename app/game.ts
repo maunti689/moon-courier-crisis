@@ -1,5 +1,5 @@
-export type RoverStatus = "ready" | "charging";
-export type OrderStatus = "available" | "delivered";
+export type RoverStatus = "ready" | "resting";
+export type OrderStatus = "available" | "delivered" | "expired";
 export type GameStatus = "playing" | "won" | "lost";
 
 export interface Zone {
@@ -33,6 +33,7 @@ export interface Order {
   weight: number;
   reward: number;
   deadlineHours: number;
+  expiresOnDay: number;
   riskBonus: number;
   status: OrderStatus;
 }
@@ -55,7 +56,7 @@ export interface GameEvent {
 }
 
 export interface GameState {
-  version: 1;
+  version: 2;
   day: number;
   credits: number;
   status: GameStatus;
@@ -85,9 +86,10 @@ export interface DeliveryResult {
 }
 
 export const MAX_DAYS = 5;
-export const TARGET_CREDITS = 900;
+export const TARGET_CREDITS = 1100;
 export const BATTERY_RESERVE = 8;
 export const DAILY_RECHARGE = 38;
+export const MAX_DELIVERIES_PER_DAY = 2;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -109,8 +111,11 @@ export function calculateDelivery(
   const risk = clamp(zone.risk + order.riskBonus, 5, 60);
   const reasons: string[] = [];
 
-  if (order.status !== "available") reasons.push("заказ уже выполнен");
-  if (rover.status !== "ready") reasons.push("ровер заряжается");
+  if (order.status === "delivered") reasons.push("заказ уже выполнен");
+  if (order.status === "expired") reasons.push("срок заказа истёк");
+  if (rover.status !== "ready") {
+    reasons.push("ровер уже выполнил рейс сегодня");
+  }
   if (order.weight > rover.capacity) {
     reasons.push(`груз ${order.weight} кг, лимит ровера ${rover.capacity} кг`);
   }
@@ -153,6 +158,20 @@ export function resolveDelivery(
     return { state, error: "Не удалось найти данные доставки" };
   }
 
+  if (state.day > order.expiresOnDay) {
+    return { state, error: "Срок заказа истёк" };
+  }
+
+  const deliveriesToday = state.deliveries.filter(
+    (delivery) => delivery.day === state.day,
+  ).length;
+  if (deliveriesToday >= MAX_DELIVERIES_PER_DAY) {
+    return {
+      state,
+      error: `Лимит базы на сегодня: ${MAX_DELIVERIES_PER_DAY} рейса`,
+    };
+  }
+
   const estimate = calculateDelivery(order, rover, zone);
   if (!estimate.canDispatch) {
     return { state, error: estimate.reasons[0] ?? "Доставка недоступна" };
@@ -178,7 +197,7 @@ export function resolveDelivery(
           ? {
               ...item,
               battery: nextBattery,
-              status: nextBattery < 25 ? "charging" : "ready",
+              status: "resting",
             }
           : item,
       ),
@@ -234,6 +253,23 @@ export function advanceDay(state: GameState): GameState {
   }
 
   const nextDay = state.day + 1;
+  const expiredOrders = state.orders.filter(
+    (order) =>
+      order.status === "available" && order.expiresOnDay < nextDay,
+  );
+  const expirationEvents: GameEvent[] = expiredOrders.length
+    ? [
+        {
+          id: `event-${state.events.length + 2}`,
+          day: nextDay,
+          text: `Просрочено заказов: ${expiredOrders.length}. ${expiredOrders
+            .map((order) => order.title)
+            .join(", ")}.`,
+          tone: "warning",
+        },
+      ]
+    : [];
+
   return {
     ...state,
     day: nextDay,
@@ -242,6 +278,11 @@ export function advanceDay(state: GameState): GameState {
       battery: Math.min(100, rover.battery + DAILY_RECHARGE),
       status: "ready",
     })),
+    orders: state.orders.map((order) =>
+      order.status === "available" && order.expiresOnDay < nextDay
+        ? { ...order, status: "expired" }
+        : order,
+    ),
     events: [
       {
         id: `event-${state.events.length + 1}`,
@@ -249,6 +290,7 @@ export function advanceDay(state: GameState): GameState {
         text: `День ${nextDay}. Роверы получили по ${DAILY_RECHARGE}% заряда.`,
         tone: "info",
       },
+      ...expirationEvents,
       ...state.events,
     ],
   };
@@ -257,13 +299,77 @@ export function advanceDay(state: GameState): GameState {
 export function isSavedGame(value: unknown): value is GameState {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<GameState>;
+  const isNumber = (item: unknown) =>
+    typeof item === "number" && Number.isFinite(item);
+  const isString = (item: unknown) => typeof item === "string";
+  const isRover = (item: unknown): item is Rover => {
+    if (!item || typeof item !== "object") return false;
+    const rover = item as Partial<Rover>;
+    return (
+      isString(rover.id) &&
+      isString(rover.name) &&
+      isString(rover.note) &&
+      isNumber(rover.battery) &&
+      isNumber(rover.capacity) &&
+      isNumber(rover.consumption) &&
+      isNumber(rover.speed) &&
+      (rover.status === "ready" || rover.status === "resting")
+    );
+  };
+  const isOrder = (item: unknown): item is Order => {
+    if (!item || typeof item !== "object") return false;
+    const order = item as Partial<Order>;
+    return (
+      isString(order.id) &&
+      isString(order.title) &&
+      isString(order.destinationId) &&
+      isString(order.cargo) &&
+      isNumber(order.weight) &&
+      isNumber(order.reward) &&
+      isNumber(order.deadlineHours) &&
+      isNumber(order.expiresOnDay) &&
+      isNumber(order.riskBonus) &&
+      ["available", "delivered", "expired"].includes(order.status ?? "")
+    );
+  };
+  const isDelivery = (item: unknown): item is Delivery => {
+    if (!item || typeof item !== "object") return false;
+    const delivery = item as Partial<Delivery>;
+    return (
+      isString(delivery.id) &&
+      isNumber(delivery.day) &&
+      isString(delivery.orderId) &&
+      isString(delivery.roverId) &&
+      isNumber(delivery.energySpent) &&
+      isNumber(delivery.payout) &&
+      typeof delivery.incident === "boolean"
+    );
+  };
+  const isEvent = (item: unknown): item is GameEvent => {
+    if (!item || typeof item !== "object") return false;
+    const event = item as Partial<GameEvent>;
+    return (
+      isString(event.id) &&
+      isNumber(event.day) &&
+      isString(event.text) &&
+      ["info", "success", "warning"].includes(event.tone ?? "")
+    );
+  };
+
   return (
-    candidate.version === 1 &&
-    typeof candidate.day === "number" &&
-    typeof candidate.credits === "number" &&
+    candidate.version === 2 &&
+    isNumber(candidate.day) &&
+    isNumber(candidate.credits) &&
+    ["playing", "won", "lost"].includes(candidate.status ?? "") &&
     Array.isArray(candidate.rovers) &&
+    candidate.rovers.length > 0 &&
+    candidate.rovers.every(isRover) &&
     Array.isArray(candidate.orders) &&
+    candidate.orders.length > 0 &&
+    candidate.orders.every(isOrder) &&
     Array.isArray(candidate.deliveries) &&
-    Array.isArray(candidate.events)
+    candidate.deliveries.every(isDelivery) &&
+    Array.isArray(candidate.events) &&
+    candidate.events.every(isEvent)
   );
 }

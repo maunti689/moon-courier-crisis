@@ -6,6 +6,8 @@ import {
   advanceDay,
   BATTERY_RESERVE,
   calculateDelivery,
+  isSavedGame,
+  MAX_DELIVERIES_PER_DAY,
   resolveDelivery,
   TARGET_CREDITS,
   type Order,
@@ -84,6 +86,7 @@ test("successful delivery updates order, rover, credits and history", () => {
   assert.equal(result.state.credits, 230);
   assert.equal(result.state.orders[0].status, "delivered");
   assert.ok(result.state.rovers[0].battery < game.rovers[0].battery);
+  assert.equal(result.state.rovers[0].status, "resting");
   assert.equal(result.state.deliveries.length, 1);
   assert.equal(result.state.deliveries[0].incident, false);
 });
@@ -99,6 +102,85 @@ test("route incident adds battery cost and reduces payout", () => {
       safeResult.state.deliveries[0].energySpent,
   );
   assert.equal(incidentResult.state.deliveries[0].incident, true);
+});
+
+test("a rover can make only one trip per day", () => {
+  const game = createInitialGame();
+  const first = resolveDelivery(game, "order-1", "spark", ZONES, () => 0.99);
+  const second = resolveDelivery(first.state, "order-5", "spark", ZONES, () => 0.99);
+
+  assert.match(second.error ?? "", /уже выполнил рейс сегодня/);
+  assert.equal(second.state.deliveries.length, 1);
+});
+
+test("the base dispatches at most two deliveries per day", () => {
+  const game = createInitialGame();
+  const first = resolveDelivery(game, "order-1", "mila", ZONES, () => 0.99);
+  const second = resolveDelivery(first.state, "order-2", "atlas", ZONES, () => 0.99);
+  const third = resolveDelivery(second.state, "order-3", "spark", ZONES, () => 0.99);
+
+  assert.equal(MAX_DELIVERIES_PER_DAY, 2);
+  assert.match(third.error ?? "", /Лимит базы/);
+  assert.equal(third.state.deliveries.length, 2);
+});
+
+test("orders expire when their last day is missed", () => {
+  const next = advanceDay(createInitialGame());
+  const expired = next.orders.find((order) => order.id === "order-1")!;
+
+  assert.equal(expired.status, "expired");
+  assert.match(next.events.map((event) => event.text).join(" "), /Просрочено заказов: 1/);
+  assert.equal(
+    calculateDelivery(expired, next.rovers[0], ZONES[0]).canDispatch,
+    false,
+  );
+});
+
+test("worst-case incidents no longer guarantee the target", () => {
+  let state = createInitialGame();
+  for (const [orderId, roverId] of [
+    ["order-1", "mila"],
+    ["order-2", "atlas"],
+  ] as const) {
+    state = resolveDelivery(state, orderId, roverId, ZONES, () => 0).state;
+  }
+  state = advanceDay(state);
+  for (const [orderId, roverId] of [
+    ["order-3", "mila"],
+    ["order-4", "spark"],
+  ] as const) {
+    state = resolveDelivery(state, orderId, roverId, ZONES, () => 0).state;
+  }
+  state = advanceDay(state);
+  state = resolveDelivery(state, "order-5", "mila", ZONES, () => 0).state;
+
+  assert.equal(state.deliveries.length, 5);
+  assert.equal(state.credits, 999);
+  assert.ok(state.credits < TARGET_CREDITS);
+});
+
+test("a careful route without incidents can win the shift", () => {
+  let state = createInitialGame();
+  for (const [orderId, roverId] of [
+    ["order-1", "mila"],
+    ["order-2", "atlas"],
+  ] as const) {
+    state = resolveDelivery(state, orderId, roverId, ZONES, () => 0.99).state;
+  }
+  state = advanceDay(state);
+  for (const [orderId, roverId] of [
+    ["order-3", "mila"],
+    ["order-4", "spark"],
+  ] as const) {
+    state = resolveDelivery(state, orderId, roverId, ZONES, () => 0.99).state;
+  }
+  state = advanceDay(state);
+  state = resolveDelivery(state, "order-5", "mila", ZONES, () => 0.99).state;
+  state = advanceDay(advanceDay(state));
+  state = advanceDay(state);
+
+  assert.equal(state.credits, 1330);
+  assert.equal(state.status, "won");
 });
 
 test("next day recharges rovers and the fifth day finishes the game", () => {
@@ -118,4 +200,20 @@ test("next day recharges rovers and the fifth day finishes the game", () => {
     credits: TARGET_CREDITS,
   });
   assert.equal(finished.status, "won");
+
+  const lost = advanceDay({ ...next, day: 5, credits: 0 });
+  assert.equal(lost.status, "lost");
+});
+
+test("saved game validation rejects broken nested data", () => {
+  const valid = createInitialGame();
+  const brokenRover = {
+    ...valid,
+    rovers: [{ ...valid.rovers[0], battery: "full" }],
+  };
+  const oldVersion = { ...valid, version: 1 };
+
+  assert.equal(isSavedGame(valid), true);
+  assert.equal(isSavedGame(brokenRover), false);
+  assert.equal(isSavedGame(oldVersion), false);
 });

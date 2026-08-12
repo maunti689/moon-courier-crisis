@@ -14,17 +14,17 @@ export const INITIAL_ROVERS: Rover[] = [
 ];
 
 export const INITIAL_ORDERS: Order[] = [
-  { id: "order-1", title: "Аварийный комплект", destinationId: "relay", cargo: "Батареи и пайки", weight: 6, reward: 230, deadlineHours: 2, riskBonus: 10, status: "available" },
-  { id: "order-2", title: "Ночная смена", destinationId: "tycho", cargo: "Рационы на трое суток", weight: 14, reward: 310, deadlineHours: 4, riskBonus: 2, status: "available" },
-  { id: "order-3", title: "Связисты хребта", destinationId: "ridge", cargo: "Пайки и термопакеты", weight: 8, reward: 260, deadlineHours: 4, riskBonus: 4, status: "available" },
-  { id: "order-4", title: "Геологи кратера", destinationId: "crater", cargo: "Вода и аварийные рационы", weight: 12, reward: 340, deadlineHours: 6, riskBonus: 8, status: "available" },
-  { id: "order-5", title: "Дежурная бригада", destinationId: "relay", cargo: "Горячие рационы", weight: 4, reward: 190, deadlineHours: 3, riskBonus: 0, status: "available" },
-  { id: "order-6", title: "Запас для буровой", destinationId: "crater", cargo: "Контейнер с пайками", weight: 26, reward: 520, deadlineHours: 8, riskBonus: 6, status: "available" },
+  { id: "order-1", title: "Аварийный комплект", destinationId: "relay", cargo: "Батареи и пайки", weight: 6, reward: 230, deadlineHours: 2, expiresOnDay: 1, riskBonus: 10, status: "available" },
+  { id: "order-2", title: "Ночная смена", destinationId: "tycho", cargo: "Рационы на трое суток", weight: 14, reward: 310, deadlineHours: 4, expiresOnDay: 2, riskBonus: 2, status: "available" },
+  { id: "order-3", title: "Связисты хребта", destinationId: "ridge", cargo: "Пайки и термопакеты", weight: 8, reward: 260, deadlineHours: 4, expiresOnDay: 2, riskBonus: 4, status: "available" },
+  { id: "order-4", title: "Геологи кратера", destinationId: "crater", cargo: "Вода и аварийные рационы", weight: 12, reward: 340, deadlineHours: 6, expiresOnDay: 4, riskBonus: 8, status: "available" },
+  { id: "order-5", title: "Дежурная бригада", destinationId: "relay", cargo: "Горячие рационы", weight: 4, reward: 190, deadlineHours: 3, expiresOnDay: 3, riskBonus: 0, status: "available" },
+  { id: "order-6", title: "Запас для буровой", destinationId: "crater", cargo: "Контейнер с пайками", weight: 26, reward: 520, deadlineHours: 8, expiresOnDay: 5, riskBonus: 6, status: "available" },
 ];
 
 export function createInitialGame(): GameState {
   return {
-    version: 1,
+    version: 2,
     day: 1,
     credits: 0,
     status: "playing",

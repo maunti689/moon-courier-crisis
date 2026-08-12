@@ -148,7 +148,8 @@ h2 { font-size: 18px; font-weight: 680; letter-spacing: -0.02em; }
   font-weight: 650;
 }
 
-.secondary-button:hover { border-color: #666e78; background: #1a1f25; }
+.secondary-button:hover:not(:disabled) { border-color: #666e78; background: #1a1f25; }
+.secondary-button:disabled { color: #616871; cursor: not-allowed; }
 
 .icon-button {
   display: grid;
@@ -278,7 +279,7 @@ h2 { font-size: 18px; font-weight: 680; letter-spacing: -0.02em; }
   font-size: 8px;
 }
 
-.impossible-note, .done-note {
+.impossible-note, .done-note, .expired-note {
   display: block;
   margin-top: 8px;
   color: var(--red);
@@ -287,6 +288,7 @@ h2 { font-size: 18px; font-weight: 680; letter-spacing: -0.02em; }
 }
 
 .done-note { color: var(--green); }
+.expired-note { color: var(--orange); }
 
 .map-panel {
   display: flex;
